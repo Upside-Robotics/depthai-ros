@@ -32,6 +32,16 @@ Segmentation::Segmentation(const std::string& daiNodeName,
     setNames();
     segNode = pipeline->create<dai::node::NeuralNetwork>();
     imageManip = pipeline->create<dai::node::ImageManip>();
+    float crop_w = 0.23;
+    float crop_top = 0.28;
+    imageManip->initialConfig.setCropRect(crop_w, crop_top, 1.0-crop_w, 1.0);  // crop the top 40% of the image
+    imageManip->initialConfig.setResize(512, 384);           // resize to 512x384
+    imageManip->initialConfig.setKeepAspectRatio(false);     // do not keep aspect ratio, stretch the
+
+    // imageManip->initialConfig.setResize(512, 384);
+    // imageManip->initialConfig.setCropRect(0.0f, 0.0f, 1.0f, 1.0f);
+    // imageManip->initialConfig.setResizeThumbnail(512, 384, 0, 0, 0);
+    // imageManip->initialConfig.setKeepAspectRatio(false);
     ph = std::make_unique<param_handlers::NNParamHandler>(node, daiNodeName, socket);
     ph->declareParams(segNode, imageManip);
     RCLCPP_DEBUG(getLogger(), "Node %s created", daiNodeName.c_str());
@@ -90,7 +100,8 @@ void Segmentation::segmentationCB(const std::string& /*name*/, const std::shared
     auto in_det = std::dynamic_pointer_cast<dai::NNData>(data);
     std::vector<std::int32_t> nn_frame = in_det->getFirstLayerInt32();
     cv::Mat nn_mat = cv::Mat(nn_frame);
-    nn_mat = nn_mat.reshape(0, 256);
+    // RCLCPP_INFO(getLogger(), "Segmentation received data with size: %d", nn_mat.size().area());
+    nn_mat = nn_mat.reshape(0, 384);
     cv::Mat cv_frame = decodeDeeplab(nn_mat);
     auto currTime = getROSNode()->get_clock()->now();
     cv_bridge::CvImage imgBridge;
