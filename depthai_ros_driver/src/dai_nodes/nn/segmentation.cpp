@@ -40,22 +40,20 @@ Segmentation::Segmentation(const std::string& daiNodeName,
     setNames();
     ph = std::make_unique<param_handlers::NNParamHandler>(node, daiNodeName, deviceName, rsCompat, socket);
     ph->declareParams(segNode);
-    description = std::make_shared<dai::NNModelDescription>();
-    description->model = ph->getParam<std::string>("i_nn_model");
-    segNode = pipeline->create<dai::node::NeuralNetwork>()->build(camNode.getUnderlyingNode(), *description);
+    // description = std::make_shared<dai::NNModelDescription>();
+    // description->model = ph->getParam<std::string>("i_nn_model");
+    // segNode = pipeline->create<dai::node::NeuralNetwork>()->build(camNode.getUnderlyingNode(), *description);
+    segNode = pipeline->create<dai::node::NeuralNetwork>();
+    segNode->setBlobPath(ph->getParam<std::string>("i_nn_model"));
+    
     imageManip = pipeline->create<dai::node::ImageManip>();
+
     float crop_sides = (1920/2 - 512/2)/2;  // crop ~23% off the sides
     float crop_top = (1080/2 - 384);   // crop ~30% off the top (sky)
-
-    // imageManip->initialConfig->addCrop(crop_sides, crop_top, 512, 384);
-
-    // imageManip->initialConfig.setResize(512, 384, dai::ImageManipConfig::ResizeMode::STRETCH);           // resize to 512x384
-
-    // imageManip->initialConfig.setResize(512, 384);
-    // imageManip->initialConfig.setCropRect(0.0f, 0.0f, 1.0f, 1.0f);
-    // imageManip->initialConfig.setResizeThumbnail(512, 384, 0, 0, 0);
-    // imageManip->initialConfig.setKeepAspectRatio(false);
+    imageManip->initialConfig->addCrop(crop_sides, crop_top, 512, 384);
     RCLCPP_DEBUG(getLogger(), "Node %s created", daiNodeName.c_str());
+    // camNode.getDefaultOut()->link(getInput());
+
     imageManip->out.link(segNode->input);
     setInOut(pipeline);
 }
@@ -106,8 +104,9 @@ void Segmentation::segmentationCB(const std::string& name, const std::shared_ptr
     cv::Mat nn_mat = cv::Mat(nnFrame.shape()[0], nnFrame.shape()[1], CV_32SC1, nnFrame.data());
     auto classNum = seg->getTensor<int32_t>(layers[1], true).shape()[1];
     // nn_mat = nn_mat.reshape(0, 384);
-    cv::Mat cv_frame = decodeDeeplab(nn_mat, classNum);
 
+    cv::Mat cv_frame = decodeDeeplab(nn_mat, classNum);
+    
     auto currTime = getROSNode()->get_clock()->now();
     cv_bridge::CvImage imgBridge;
     sensor_msgs::msg::Image img_msg;
