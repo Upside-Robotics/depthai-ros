@@ -57,7 +57,7 @@ class Segmentation : public BaseNode {
     void closeQueues() override;
 
    private:
-    cv::Mat decodeDeeplab(cv::Mat mat, int classNum);
+    cv::Mat decodeDeeplab(cv::Mat& mat, int classNum);
     void segmentationCB(const std::string& name, const std::shared_ptr<dai::ADatatype>& data);
     std::vector<std::string> labelNames;
     std::shared_ptr<depthai_bridge::ImageConverter> imageConverter;

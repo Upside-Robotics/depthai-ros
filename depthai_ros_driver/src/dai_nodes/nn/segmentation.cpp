@@ -36,22 +36,22 @@ Segmentation::Segmentation(const std::string& daiNodeName,
                            dai_nodes::SensorWrapper& camNode,
                            const dai::CameraBoardSocket& socket)
     : BaseNode(daiNodeName, node, pipeline, deviceName, rsCompat) {
-    RCLCPP_DEBUG(getLogger(), "Creating node %s", daiNodeName.c_str());
+    RCLCPP_INFO(getLogger(), "Creating node %s", daiNodeName.c_str());
     setNames();
     ph = std::make_unique<param_handlers::NNParamHandler>(node, daiNodeName, deviceName, rsCompat, socket);
     ph->declareParams(segNode);
-    // description = std::make_shared<dai::NNModelDescription>();
+
     // description->model = ph->getParam<std::string>("i_nn_model");
     // segNode = pipeline->create<dai::node::NeuralNetwork>()->build(camNode.getUnderlyingNode(), *description);
-    segNode = pipeline->create<dai::node::NeuralNetwork>();
-    segNode->setBlobPath(ph->getParam<std::string>("i_nn_model"));
-    
+    auto archive = dai::NNArchive(ph->getParam<std::string>("i_nn_model"));
+    segNode = pipeline->create<dai::node::NeuralNetwork>()->build(camNode.getUnderlyingNode(), archive);
+
     imageManip = pipeline->create<dai::node::ImageManip>();
 
     float crop_sides = (1920/2 - 512/2)/2;  // crop ~23% off the sides
     float crop_top = (1080/2 - 384);   // crop ~30% off the top (sky)
     imageManip->initialConfig->addCrop(crop_sides, crop_top, 512, 384);
-    RCLCPP_DEBUG(getLogger(), "Node %s created", daiNodeName.c_str());
+    RCLCPP_INFO(getLogger(), "Node %s created", daiNodeName.c_str());
     // camNode.getDefaultOut()->link(getInput());
 
     imageManip->out.link(segNode->input);
@@ -68,12 +68,12 @@ void Segmentation::setNames() {
 void Segmentation::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {}
 
 void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
-    nnQ = segNode->out.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
+    nnQ = segNode->out.createOutputQueue(1, false);
     nnPub = image_transport::create_camera_publisher(getROSNode().get(), "~/" + getName() + "/image_raw");
     nnQ->addCallback(std::bind(&Segmentation::segmentationCB, this, std::placeholders::_1, std::placeholders::_2));
     if(ph->getParam<bool>("i_enable_passthrough")) {
         auto tfPrefix = getOpticalFrameName(getSocketName(ph->getSocketID()));
-        ptQ = segNode->passthrough.createOutputQueue(ph->getParam<int>("i_max_q_size"), false);
+        ptQ = segNode->passthrough.createOutputQueue(1, false);
         imageConverter = std::make_unique<depthai_bridge::ImageConverter>(tfPrefix, false);
         infoManager = std::make_shared<camera_info_manager::CameraInfoManager>(
             getROSNode()->create_sub_node(std::string(getROSNode()->get_name()) + "/" + getName()).get(), "/" + getName());
@@ -95,14 +95,22 @@ cv::Mat xarray_to_mat(xt::xarray<int> xarr) {
     return mat;
 }
 void Segmentation::segmentationCB(const std::string& name, const std::shared_ptr<dai::ADatatype>& data) {
+    // RCLCPP_INFO(getLogger(), "Segmentation CB");
     auto seg = std::dynamic_pointer_cast<dai::NNData>(data);
     auto layers = seg->getAllLayerNames();
+    // RCLCPP_INFO(getLogger(), "Segmentation CB Layers: %s, %ld total", layers[0].c_str(), layers.size());
+
     auto outputName = layers[0];
-    auto nnFrame = seg->getTensor<int32_t>(outputName, true);
+    auto nnFrame = seg->getFirstTensor<int32_t>(true);
+    // RCLCPP_INFO(getLogger(), "Segmentation CB Frame: %ld total", nnFrame.size());
+
     auto [width, height] = seg->transformation->getSize();
+    // RCLCPP_INFO(getLogger(), "Size: %ld, %ld", width, height);
+
     nnFrame.reshape({width, height});
-    cv::Mat nn_mat = cv::Mat(nnFrame.shape()[0], nnFrame.shape()[1], CV_32SC1, nnFrame.data());
-    auto classNum = seg->getTensor<int32_t>(layers[1], true).shape()[1];
+    cv::Mat nn_mat = cv::Mat(height, width, CV_32SC1, nnFrame.data());
+    int classNum = 21; // actually 1, but this was a bug in the v2 depthai version as well
+    // seg->getTensor<int32_t>(layers[1], true).shape()[1];
     // nn_mat = nn_mat.reshape(0, 384);
 
     cv::Mat cv_frame = decodeDeeplab(nn_mat, classNum);
@@ -115,25 +123,33 @@ void Segmentation::segmentationCB(const std::string& name, const std::shared_ptr
     auto tfPrefix = getOpticalFrameName(getSocketName(static_cast<dai::CameraBoardSocket>(ph->getParam<int>("i_board_socket_id"))));
     header.frame_id = tfPrefix;
     nnInfo.header = header;
+    // nnInfo.height = cv_frame.rows;
+    // nnInfo.width = cv_frame.cols;
     imgBridge = cv_bridge::CvImage(header, sensor_msgs::image_encodings::BGR8, cv_frame);
     imgBridge.toImageMsg(img_msg);
+    // img_msg.height = 384;
+    // img_msg.width = 512;
+    // img_msg.step = 512 * 3;
     nnPub.publish(img_msg, nnInfo);
 }
-cv::Mat Segmentation::decodeDeeplab(cv::Mat mat, int classNum) {
-    cv::Mat out = mat.mul(255 / classNum);
-    out.convertTo(out, CV_8UC1);
-    cv::Mat colors = cv::Mat(256, 1, CV_8UC3);
-    cv::applyColorMap(out, colors, cv::COLORMAP_JET);
-    for(int row = 0; row < out.rows; ++row) {
-        uchar* p = out.ptr(row);
-        for(int col = 0; col < out.cols; ++col) {
-            if(*p++ == 0) {
-                colors.at<cv::Vec3b>(row, col)[0] = 0;
-                colors.at<cv::Vec3b>(row, col)[1] = 0;
-                colors.at<cv::Vec3b>(row, col)[2] = 0;
-            }
-        }
-    }
+cv::Mat Segmentation::decodeDeeplab(cv::Mat& mat, int classNum) {
+    // cv::Mat out = mat.mul(255 / classNum);
+    mat.convertTo(mat, CV_8UC1, 255 / classNum);
+    cv::Mat colors = cv::Mat(384, 1, CV_8UC3);
+    cv::applyColorMap(mat, colors, cv::COLORMAP_JET);
+    colors.setTo(cv::Vec3b(0, 0, 0), mat < 255/21);
+    // colors.reshape(0, 384);
+
+    // for(int row = 0; row < out.rows; ++row) {
+    //     uchar* p = out.ptr(row);
+    //     for(int col = 0; col < out.cols; ++col) {
+    //         if(*p++ == 0) {
+    //             colors.at<cv::Vec3b>(row, col)[0] = 0;
+    //             colors.at<cv::Vec3b>(row, col)[1] = 0;
+    //             colors.at<cv::Vec3b>(row, col)[2] = 0;
+    //         }
+    //     }
+    // }
     return colors;
 }
 void Segmentation::link(dai::Node::Input& in, int /*linkType*/) {
