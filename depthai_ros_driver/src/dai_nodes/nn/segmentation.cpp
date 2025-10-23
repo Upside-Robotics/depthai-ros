@@ -65,7 +65,7 @@ void Segmentation::setNames() {
     ptQName = getName() + "_pt";
 }
 
-void Segmentation::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {}
+void Segmentation::setInOut(std::shared_ptr<dai::Pipeline> /* pipeline */) {}
 
 void Segmentation::setupQueues(std::shared_ptr<dai::Device> device) {
     nnQ = segNode->out.createOutputQueue(1, false);
@@ -94,8 +94,7 @@ cv::Mat xarray_to_mat(xt::xarray<int> xarr) {
     cv::Mat mat(xarr.shape()[0], xarr.shape()[1], CV_32SC1, xarr.data());
     return mat;
 }
-void Segmentation::segmentationCB(const std::string& name, const std::shared_ptr<dai::ADatatype>& data) {
-    // RCLCPP_INFO(getLogger(), "Segmentation CB");
+void Segmentation::segmentationCB(const std::string& /* name */, const std::shared_ptr<dai::ADatatype>& data) {
     auto seg = std::dynamic_pointer_cast<dai::NNData>(data);
     auto layers = seg->getAllLayerNames();
     // RCLCPP_INFO(getLogger(), "Segmentation CB Layers: %s, %ld total", layers[0].c_str(), layers.size());

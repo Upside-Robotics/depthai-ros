@@ -21,10 +21,10 @@ def launch_setup(context, *args, **kwargs):
     params_file = LaunchConfiguration("params_file")
     parameters = [
         {
-            "frame_id": name,
+            "frame_id": "oak_parent_frame",
             "subscribe_rgb": True,
             "subscribe_depth": True,
-            "subscribe_odom_info": True,
+            "subscribe_odom_info": False,
             "approx_sync": True,
             "Rtabmap/DetectionRate": "3.5",
         }
@@ -34,6 +34,7 @@ def launch_setup(context, *args, **kwargs):
         ("rgb/image", name + "/rgb/image_raw"),
         ("rgb/camera_info", name + "/rgb/camera_info"),
         ("depth/image", name + "/stereo/image_raw"),
+        ("odom", name + "/vio/odometry")
     ]
 
     return [
@@ -42,18 +43,6 @@ def launch_setup(context, *args, **kwargs):
                 os.path.join(depthai_prefix, "launch", "driver.launch.py")
             ),
             launch_arguments={"name": name, "params_file": params_file}.items(),
-        ),
-        LoadComposableNodes(
-            target_container=name + "_container",
-            composable_node_descriptions=[
-                ComposableNode(
-                    package="rtabmap_odom",
-                    plugin="rtabmap_odom::RGBDOdometry",
-                    name="rgbd_odometry",
-                    parameters=parameters,
-                    remappings=remappings,
-                ),
-            ],
         ),
         LoadComposableNodes(
             target_container=name + "_container",
@@ -83,7 +72,7 @@ def generate_launch_description():
         DeclareLaunchArgument("name", default_value="oak"),
         DeclareLaunchArgument(
             "params_file",
-            default_value=os.path.join(depthai_prefix, "config", "rgbd.yaml"),
+            default_value=os.path.join(depthai_prefix, "config", "vio.yaml"),
         ),
     ]
 
